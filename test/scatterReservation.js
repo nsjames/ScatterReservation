@@ -7,12 +7,15 @@ contract('ScatterReservation', async accounts => {
 
   let scatter = null;
 
+  const decimals = 1000000000000000000;
+  const p = n => n*decimals;
+
   let gasCosts = [];
   let maxGas = {
     reserveUser:310000,
     reserveDapp:220000,
     bid:210000,
-    sell:80000
+    sell:150000
   }
 
   const testName = "helloworld";
@@ -28,11 +31,13 @@ contract('ScatterReservation', async accounts => {
   const fromB = {from:accounts[1]};
   const fromC = {from:accounts[2]};
 
+  const fromAWithValue = {from:accounts[0], value:p(0.1)};
+  const fromBWithValue = {from:accounts[1], value:p(0.1)};
+  const fromCWithValue = {from:accounts[2], value:p(0.1)};
+
   const signatoryKey = accounts[3];
   const fromSignatory = {from:signatoryKey};
 
-  const decimals = 1000000000000000000;
-  const p = n => n*decimals;
 
   let eos = null;
 
@@ -48,7 +53,6 @@ contract('ScatterReservation', async accounts => {
 
   it('should be able to set the signatory', async () => {
     await scatter.setSignatory(signatoryKey);
-    assert(await scatter.signatory() === signatoryKey);
   });
 
   it('should not have the test name', async () => {
@@ -142,7 +146,7 @@ contract('ScatterReservation', async accounts => {
 
   it('should be able to approve the dapp from the signatory', async () => {
     assert(await scatter.dappDecision(7, true, fromSignatory) !== undefined, "Bad dapp decision");
-    assert(await scatter.names(testDappName) !== 0x0, "Cant find name");
+    assert(await scatter.exists(testDappName), "Cant find name");
   });
 
   it('should not be able to approve a dapp that has already been aproved', async () => {
@@ -168,23 +172,27 @@ contract('ScatterReservation', async accounts => {
     /**************************************/
 
   it('should not allow the same account to bid on a reservation', async () => {
-    await scatter.bid(2, p(2), testKeys[0], fromA).catch(assert);
+    await scatter.bid(2, testKeys[0], fromAWithValue).catch(assert)
+  });
+
+  it('should not allow bid which are below 0.01 ETH', async () => {
+    await scatter.bid(2, testKeys[0], {from:accounts[1], value:p(0.0001)}).catch(assert);
+    await scatter.bid(2, testKeys[0], {from:accounts[1]}).catch(assert);
   });
 
   it('should not allow a different account to bid on a reservation with the same pkey', async () => {
-    const result = await scatter.bid(2, p(2), testKeys[0], fromB).catch(assert);
-    console.log('res', result)
-  });
-
-  it('should not be able to bid on a reservation with a bid lower than the previous', async () => {
-    const result = await scatter.bid(2, p(0.5), testKeys[1], fromB).catch(assert);
+    await scatter.bid(2, testKeys[0], fromBWithValue).catch(assert)
   });
 
   it('should be able to bid on a reservation from another account', async () => {
-    const result = await scatter.bid(2, p(2), testKeys[1], fromB);
-    assert(await scatter.bidders(2) === accounts[1]);
+    const result = await scatter.bid(2, testKeys[1], fromBWithValue);
+    assert(await scatter.bidOwner(2) === accounts[1]);
     assert(result.receipt.gasUsed < maxGas.bid, "Too much gas used: " + result.receipt.gasUsed);
     gasCosts.push({fn:'bid', gas:result.receipt.gasUsed});
+  });
+
+  it('should not be able to bid on a reservation with a bid lower than the previous', async () => {
+    const result = await scatter.bid(2, testKeys[1], fromBWithValue).catch(assert)
   });
 
 
@@ -236,10 +244,14 @@ contract('ScatterReservation', async accounts => {
   });
 
   it('should be able to sell to the highest bid', async () => {
+    const balanceBefore = await web3.eth.getBalance(accounts[0]);
+    const balanceBBefore = await web3.eth.getBalance(accounts[1]);
     const result = await scatter.sell(2, fromA);
+    assert(balanceBefore.c[0] < await web3.eth.getBalance(accounts[0]).c[0], "Seller did not get funds");
+    assert(balanceBBefore.c[0] == await web3.eth.getBalance(accounts[1]).c[0], "Bidder funds changed");
     assert(await scatter.reservationOwner(2) === accounts[1], "wrong owner");
     assert(result.receipt.gasUsed < maxGas.sell, "Too much gas used: " + result.receipt.gasUsed);
-    assert(await scatter.bidders(2) === '0x0000000000000000000000000000000000000000', "bidder still exists");
+    assert(await scatter.bidOwner(2) === '0x0000000000000000000000000000000000000000', "bidder still exists");
     gasCosts.push({fn:'sell', gas:result.receipt.gasUsed});
   });
 

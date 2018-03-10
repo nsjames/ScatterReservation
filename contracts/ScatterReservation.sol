@@ -1,4 +1,4 @@
-pragma solidity ^0.4.0;
+pragma solidity ^0.4.19;
 
 contract ScatterReservation {
 
@@ -9,6 +9,8 @@ contract ScatterReservation {
         bytes1 entityType;
         bytes24 name;
         bytes publicKey;
+        uint priceReservedAt;
+        bool transferring;
     }
 
     struct Bid {
@@ -20,25 +22,25 @@ contract ScatterReservation {
 
     // STATE VARIABLES
     // ---------------------------------
-    address EOS;
-    uint bidTimeout = 2 days;
+    address private EOS;
+    uint private bidTimeout = 2 days;
 
-    address public owner;
-    address public signatory;
-    uint public reservationPrice;
+    address private owner;
+    address private signatory;
+    uint private reservationPrice;
 
-    mapping (uint => address) public reservers;
-    mapping (uint => Reservation) public reservations;
-    mapping (uint => Reservation) public pendingReservations;
+    mapping (uint => address) private reservers;
+    mapping (uint => Reservation) private reservations;
+    mapping (uint => Reservation) private pendingReservations;
 
-    mapping (uint => address) public bidders;
-    mapping (uint => Bid) public bids;
-    mapping (uint => uint) public lastSoldFor;
+    mapping (uint => address) private bidders;
+    mapping (uint => Bid) private bids;
+    mapping (uint => uint) private lastSoldFor;
 
-    mapping (bytes24 => uint) public names;
-    mapping (bytes24 => uint) public pendingNames;
+    mapping (bytes24 => uint) private names;
+    mapping (bytes24 => uint) private pendingNames;
 
-    uint public atomicResId;
+    uint private atomicResId;
 
     // CONSTRUCTOR
     // ---------------------------------
@@ -74,6 +76,7 @@ contract ScatterReservation {
     event EmitUnBid(uint reservationId);
     event EmitSell(uint reservationId, uint price, bytes pkey, address eth);
     event EmitError(string msg);
+    event EmitPrice(uint price);
 
     // READ
     // ---------------------------------
@@ -96,6 +99,9 @@ contract ScatterReservation {
 
     // WRITE
     // ---------------------------------
+    // Keeps all ether sent with no data present.
+    function() public payable { }
+
     function setSignatory(address _signatory) public only(0x0) {
         signatory = _signatory;
     }
@@ -127,8 +133,8 @@ contract ScatterReservation {
 
         names[name] = atomicResId;
         reservers[atomicResId] = msg.sender;
-        reservations[atomicResId] = Reservation(atomicResId, 0, name, pkey);
-        lastSoldFor[atomicResId] = reservationPrice;
+        reservations[atomicResId] = Reservation(atomicResId, 0, name, pkey, reservationPrice, false);
+
         EmitReservation(atomicResId, name, pkey, msg.sender);
         return atomicResId;
     }
@@ -144,7 +150,7 @@ contract ScatterReservation {
 
         pendingNames[name] = atomicResId;
         reservers[atomicResId] = msg.sender;
-        pendingReservations[atomicResId] = Reservation(atomicResId, 1, name, pkey);
+        pendingReservations[atomicResId] = Reservation(atomicResId, 1, name, pkey, reservationPrice, false);
         EmitPendingReservation(atomicResId);
         return atomicResId;
     }
@@ -158,13 +164,16 @@ contract ScatterReservation {
 
         if(accepted) {
             // Return funds to possible user owner
-            if(names[r.name] > 0 && lastSoldFor[id] > 0)
-                giveEOS(reservers[names[r.name]], lastSoldFor[id]);
+            if(names[r.name] > 0){
+              uint rId = names[r.name];
+              // Paying back EOS
+              if(lastSoldFor[rId] == 0) giveEOS(reservers[rId], reservations[rId].priceReservedAt);
+              // Paying back ETH
+              else reservers[rId].transfer(lastSoldFor[id]);
+            }
 
-            lastSoldFor[id] = reservationPrice;
             reservations[id] = r;
             names[r.name] = id;
-
         }
 
         delete pendingNames[r.name];
@@ -175,27 +184,22 @@ contract ScatterReservation {
     /***
     * Bids on a reservation.
     */
-    function bid(uint rId, uint price, bytes pkey) public returns (uint) {
+    function bid(uint rId, bytes pkey) public payable returns (uint) {
         assert(reservers[rId] != msg.sender);
         assert(bidders[rId] != msg.sender);
+        require(msg.value >= 10000000000000000);
         require(reservations[rId].id > 0);
         require(validPkey(pkey));
         require(!equalBytes(reservations[rId].publicKey, pkey));
-        require(lastSoldFor[rId] < price);
-        require(bids[rId].price < price);
-
-        // Taking bid price in EOS
-        require(takeEOS(price));
-
-        // Returning previous bid if existing
-        if(bids[rId].timestamp > 0){
-            require(bids[rId].price < price);
-            giveEOS(bidders[rId], bids[rId].price);
+        if(lastSoldFor[rId] > 0) require(lastSoldFor[rId] < msg.value);
+        if(bids[rId].price > 0) {
+          require(bids[rId].price < msg.value);
+          bidders[rId].transfer(bids[rId].price);
         }
 
         bidders[rId] = msg.sender;
-        bids[rId] = Bid(pkey, price, now);
-        EmitBid(rId, pkey, price, msg.sender);
+        bids[rId] = Bid(pkey, msg.value, now);
+        EmitBid(rId, pkey, msg.value, msg.sender);
         return rId;
     }
 
@@ -207,7 +211,7 @@ contract ScatterReservation {
         require(bids[rId].timestamp >= now + bidTimeout);
 
         // Returning funds
-        giveEOS(bidders[rId], bids[rId].price);
+        bidders[rId].transfer(bids[rId].price);
 
         // Removing bid
         delete bids[rId];
@@ -217,21 +221,23 @@ contract ScatterReservation {
     }
 
     function sell(uint rId) public {
+        assert(reservations[rId].id > 0);
         assert(reservers[rId] == msg.sender);
-        require(reservations[rId].id > 0);
-        require(bidders[rId] > 0);
+        assert(!reservations[rId].transferring);
         require(bids[rId].price > 0);
 
-        // Moving EOS funds
-        require(takeEOS(bids[rId].price));
-        require(giveEOS(bidders[rId], bids[rId].price - (bids[rId].price/10)  )); // 0.1% tax
+        reservations[rId].transferring = true;
+        if(!reservers[rId].send(bids[rId].price  - (bids[rId].price/10))){
+            reservations[rId].transferring = false;
+            return;
+        }
 
         // Changing ownership
+        reservations[rId].transferring = false;
         reservations[rId].publicKey = bids[rId].publicKey;
         reservers[rId] = bidders[rId];
         lastSoldFor[rId] = bids[rId].price;
 
-        // This wont work, since it refunds gas and exceeds minimum. Screw solidity.
         delete bids[rId];
         delete bidders[rId];
 
