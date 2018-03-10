@@ -14,6 +14,7 @@ contract('ScatterReservation', async accounts => {
   let maxGas = {
     reserveUser:310000,
     reserveDapp:220000,
+    dappDecision:200000,
     bid:210000,
     sell:150000
   }
@@ -145,8 +146,10 @@ contract('ScatterReservation', async accounts => {
   });
 
   it('should be able to approve the dapp from the signatory', async () => {
-    assert(await scatter.dappDecision(7, true, fromSignatory) !== undefined, "Bad dapp decision");
+    let result = await scatter.dappDecision(7, true, fromSignatory);
     assert(await scatter.exists(testDappName), "Cant find name");
+    assert(result.receipt.gasUsed < maxGas.dappDecision, "Too much gas used: " + result.receipt.gasUsed);
+    gasCosts.push({fn:'dappDecision', gas:result.receipt.gasUsed});
   });
 
   it('should not be able to approve a dapp that has already been aproved', async () => {
@@ -176,7 +179,7 @@ contract('ScatterReservation', async accounts => {
   });
 
   it('should not allow bid which are below 0.01 ETH', async () => {
-    await scatter.bid(2, testKeys[0], {from:accounts[1], value:p(0.0001)}).catch(assert);
+    await scatter.bid(2, testKeys[0], {from:accounts[1], value:p(0.001)}).catch(assert);
     await scatter.bid(2, testKeys[0], {from:accounts[1]}).catch(assert);
   });
 
@@ -206,7 +209,7 @@ contract('ScatterReservation', async accounts => {
     const testingUnbid = false;
 
   it('should not be able to unbid a bid that is from another user', async () => {
-    const result = await scatter.unBid(1, fromC).catch(assert);
+    const result = await scatter.unBid(2, fromC).catch(assert);
   });
 
   it('should not be able to unbid a bid that does not exist', async () => {
@@ -214,18 +217,18 @@ contract('ScatterReservation', async accounts => {
   });
 
   if(!testingUnbid) it('should not be able to unbid a bid that is not yet stale', async () => {
-    const result = await scatter.unBid(1, fromB).catch(assert);
+    const result = await scatter.unBid(2, fromB).catch(assert);
   });
 
   if(testingUnbid) {
     it('should be able to unbid a bid', async () => {
-      assert(await scatter.unBid(1, fromB) !== undefined);
-      assert(await scatter.bidders(1) === '0x0000000000000000000000000000000000000000');
+      assert(await scatter.unBid(2, fromB) !== undefined);
+      assert(await scatter.bidOwner(2) === '0x0000000000000000000000000000000000000000');
     });
 
     it('putting back bid that was unbid', async () => {
-      const result = await scatter.bid(1, p(2), testKeys[1], fromB);
-      assert(await scatter.bidders(1) === accounts[1]);
+      const result = await scatter.bid(2, testKeys[1], fromBWithValue);
+      assert(await scatter.bidOwner(2) === accounts[1]);
     });
   }
 
@@ -259,6 +262,20 @@ contract('ScatterReservation', async accounts => {
     await scatter.bid(2, p(2), testKeys[0], fromA).catch(assert);
   });
 
+
+    /**************************************/
+    /*******          FLOW          *******/
+    /**************************************/
+
+    it('should be able to set chain launched to true', async () => {
+      await scatter.setChainLaunched(true, fromA);
+    });
+
+    it('should not be able to reserve, bid, or sell after chain launch', async () => {
+      await scatter.reserveUser("randomname", testKeys[1], fromB).catch(assert);
+      await scatter.bid(3, testKeys[0], fromAWithValue).catch(assert);
+      await scatter.sell(2, fromA).catch(assert);
+    });
 
 
     /**************************************/

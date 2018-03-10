@@ -17,6 +17,7 @@ contract ScatterReservation {
         bytes publicKey;
         uint price;
         uint timestamp;
+        bool transferring;
     }
 
 
@@ -41,91 +42,61 @@ contract ScatterReservation {
     mapping (bytes24 => uint) private pendingNames;
 
     uint private atomicResId;
+    bool private chainLaunched;
 
     // CONSTRUCTOR
     // ---------------------------------
     function ScatterReservation(address _eos) public {
         EOS = _eos;
         owner = msg.sender;
+        chainLaunched = false;
 
-        // Starting at one to be able to reserve names
+        // Starting at one to be able to force reserve names
         atomicResId = 1;
 
         // EOS price to reserve
         reservationPrice = 1000000000000000000;
     }
 
-
-    // MODIFIERS
-    modifier only(address _address){
-        require(msg.sender == _address || owner == msg.sender);
-        _;
-    }
-
-    modifier beforeChainLaunch() {
-        //        require(now < now);
-        _;
-    }
-
     // EVENTS
     // ---------------------------------
     event EmitReservation(uint reservationId, bytes24 name, bytes pkey, address eth);
-    event EmitPendingReservation(uint reservationId);
-    event EmitDappDecision(uint reservationId);
+    event EmitPendingReservation(uint reservationId, bytes24 name, bytes pkey, address eth);
+    event EmitDappDecision(uint reservationId, bool accepted);
     event EmitBid(uint reservationId, bytes pkey, uint price, address eth);
-    event EmitUnBid(uint reservationId);
+    event EmitUnBid(uint reservationId, uint price, address bidder);
     event EmitSell(uint reservationId, uint price, bytes pkey, address eth);
-    event EmitError(string msg);
-    event EmitPrice(uint price);
 
-    // READ
+    // MODIFIERS
     // ---------------------------------
-    function currentId() public constant returns (uint) {
-        return atomicResId;
+    modifier only(address _address){
+      require(msg.sender == _address || owner == msg.sender);
+      _;
     }
 
-    function exists(bytes24 name) public constant returns (bool) {
-        return names[name] > 0 || pendingNames[name] > 0;
+    modifier unlaunched() {
+      require(!chainLaunched);
+      _;
     }
 
-    function reservationOwner(uint rId) public constant returns (address) {
-        return reservers[rId];
-    }
-
-    function bidOwner(uint rId) public constant returns (address) {
-        return bidders[rId];
-    }
-
+    // READ ONLY
+    // ---------------------------------
+    function currentId()                public constant returns (uint) { return atomicResId; }
+    function exists(bytes24 name)       public constant returns (bool) { return names[name] > 0 || pendingNames[name] > 0; }
+    function reservationOwner(uint rId) public constant returns (address) { return reservers[rId]; }
+    function bidOwner(uint rId)         public constant returns (address) { return bidders[rId]; }
 
     // WRITE
     // ---------------------------------
-    // Keeps all ether sent with no data present.
-    function() public payable { }
+    function() public payable {}
+    function setSignatory(address _signatory)   public only(0x0) { signatory = _signatory; }
+    function setChainLaunched(bool _launched)   public only(signatory) { chainLaunched = _launched; }
+    function setEOSAddress(address _address)    public only(signatory) { EOS = _address; }
+    function setReservationPrice(uint _price)   public only(signatory) { reservationPrice = _price; }
+    function setBidTimeout(uint timeout)        public only(signatory) { bidTimeout = timeout; }
+    function forceReservedName(bytes24 name)    public only(signatory) { names[name] = 1; }
 
-    function setSignatory(address _signatory) public only(0x0) {
-        signatory = _signatory;
-    }
-
-    function setEOSAddress(address _address) public only(signatory) {
-        EOS = _address;
-    }
-
-    function setReservationPrice(uint _price) public only(signatory) {
-        reservationPrice = _price;
-    }
-
-    function forceReservedName(bytes24 name) public only(signatory) {
-        names[name] = 1;
-    }
-
-    function setBidTimeout(uint timeout) public only(signatory) {
-        bidTimeout = timeout;
-    }
-
-    /***
-     * Reserves a User Identity
-     * */
-    function reserveUser(bytes24 name, bytes pkey) public returns (uint) {
+    function reserveUser(bytes24 name, bytes pkey) public unlaunched {
         require(validReservation(name,pkey));
         require(names[name] == 0);
         require(takeEOS(reservationPrice));
@@ -136,13 +107,9 @@ contract ScatterReservation {
         reservations[atomicResId] = Reservation(atomicResId, 0, name, pkey, reservationPrice, false);
 
         EmitReservation(atomicResId, name, pkey, msg.sender);
-        return atomicResId;
     }
 
-    /***
-     * Reserves a Dapp Identity
-     * */
-    function reserveDapp(bytes24 name, bytes pkey) public returns (uint) {
+    function reserveDapp(bytes24 name, bytes pkey) public unlaunched {
         require(validReservation(name,pkey));
         require(pendingNames[name] == 0);
         require(takeEOS(reservationPrice));
@@ -151,13 +118,9 @@ contract ScatterReservation {
         pendingNames[name] = atomicResId;
         reservers[atomicResId] = msg.sender;
         pendingReservations[atomicResId] = Reservation(atomicResId, 1, name, pkey, reservationPrice, false);
-        EmitPendingReservation(atomicResId);
-        return atomicResId;
+        EmitPendingReservation(atomicResId, name, pkey, msg.sender);
     }
 
-    /***
-     * Used for merging pending reservations with reservations
-     * */
     function dappDecision(uint id, bool accepted) public only(signatory) {
         Reservation storage r = pendingReservations[id];
         require(r.id == id);
@@ -178,13 +141,10 @@ contract ScatterReservation {
 
         delete pendingNames[r.name];
         delete pendingReservations[id];
-        EmitDappDecision(id);
+        EmitDappDecision(id, accepted);
     }
 
-    /***
-    * Bids on a reservation.
-    */
-    function bid(uint rId, bytes pkey) public payable returns (uint) {
+    function bid(uint rId, bytes pkey) public payable unlaunched {
         assert(reservers[rId] != msg.sender);
         assert(bidders[rId] != msg.sender);
         require(msg.value >= 10000000000000000);
@@ -194,33 +154,31 @@ contract ScatterReservation {
         if(lastSoldFor[rId] > 0) require(lastSoldFor[rId] < msg.value);
         if(bids[rId].price > 0) {
           require(bids[rId].price < msg.value);
+          require(!bids[rId].transferring);
+          bids[rId].transferring = true;
           bidders[rId].transfer(bids[rId].price);
         }
 
         bidders[rId] = msg.sender;
-        bids[rId] = Bid(pkey, msg.value, now);
+        bids[rId] = Bid(pkey, msg.value, now, false);
         EmitBid(rId, pkey, msg.value, msg.sender);
-        return rId;
     }
 
-    /***
-    * Unbids on a stale reservation
-    */
     function unBid(uint rId) public {
         assert(bidders[rId] == msg.sender);
         require(bids[rId].timestamp >= now + bidTimeout);
 
-        // Returning funds
-        bidders[rId].transfer(bids[rId].price);
-
-        // Removing bid
-        delete bids[rId];
+        uint price = bids[rId].price;
+        address bidder = bidders[rId];
         delete bidders[rId];
+        delete bids[rId];
 
-        EmitUnBid(rId);
+        bidder.transfer(price);
+
+        EmitUnBid(rId, price, msg.sender);
     }
 
-    function sell(uint rId) public {
+    function sell(uint rId) public unlaunched {
         assert(reservations[rId].id > 0);
         assert(reservers[rId] == msg.sender);
         assert(!reservations[rId].transferring);
