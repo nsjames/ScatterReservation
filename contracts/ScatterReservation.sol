@@ -32,14 +32,12 @@ contract ScatterReservation {
 
     mapping (uint => address) private reservers;
     mapping (uint => Reservation) private reservations;
-    mapping (uint => Reservation) private pendingReservations;
 
     mapping (uint => address) private bidders;
     mapping (uint => Bid) private bids;
     mapping (uint => uint) private lastSoldFor;
 
     mapping (bytes24 => uint) private names;
-    mapping (bytes24 => uint) private pendingNames;
 
     uint private atomicResId;
     bool private chainLaunched;
@@ -61,8 +59,6 @@ contract ScatterReservation {
     // EVENTS
     // ---------------------------------
     event EmitReservation(uint reservationId, bytes24 name, bytes pkey, address eth);
-    event EmitPendingReservation(uint reservationId, bytes24 name, bytes pkey, address eth);
-    event EmitDappDecision(uint reservationId, bool accepted);
     event EmitBid(uint reservationId, bytes pkey, uint price, address eth);
     event EmitUnBid(uint reservationId, uint price, address bidder);
     event EmitSell(uint reservationId, uint price, bytes pkey, address eth);
@@ -82,9 +78,11 @@ contract ScatterReservation {
     // READ ONLY
     // ---------------------------------
     function currentId()                public constant returns (uint) { return atomicResId; }
-    function exists(bytes24 name)       public constant returns (bool) { return names[name] > 0 || pendingNames[name] > 0; }
+    function exists(bytes24 name)       public constant returns (bool) { return names[name] > 0; }
     function reservationOwner(uint rId) public constant returns (address) { return reservers[rId]; }
     function bidOwner(uint rId)         public constant returns (address) { return bidders[rId]; }
+    function getSignatory()             public constant returns (address) { return signatory; }
+    function lastPrice(uint rId)        public constant returns (uint) { return lastSoldFor[rId]; }
 
     // WRITE
     // ---------------------------------
@@ -94,11 +92,15 @@ contract ScatterReservation {
     function setEOSAddress(address _address)    public only(signatory) { EOS = _address; }
     function setReservationPrice(uint _price)   public only(signatory) { reservationPrice = _price; }
     function setBidTimeout(uint timeout)        public only(signatory) { bidTimeout = timeout; }
-    function forceReservedName(bytes24 name)    public only(signatory) { names[name] = 1; }
 
-    function reserveUser(bytes24 name, bytes pkey) public unlaunched {
+    function forceReservedNames(bytes24[] _names)   public only(signatory) {
+      for (uint i = 0; i < _names.length; i++)
+          names[_names[i]] = 1;
+    }
+
+    function reserve(bytes24 name, bytes pkey) public unlaunched {
         require(validReservation(name,pkey));
-        require(names[name] == 0);
+        require(!exists(name));
         require(takeEOS(reservationPrice));
         atomicResId++;
 
@@ -109,41 +111,6 @@ contract ScatterReservation {
         EmitReservation(atomicResId, name, pkey, msg.sender);
     }
 
-    function reserveDapp(bytes24 name, bytes pkey) public unlaunched {
-        require(validReservation(name,pkey));
-        require(pendingNames[name] == 0);
-        require(takeEOS(reservationPrice));
-        atomicResId++;
-
-        pendingNames[name] = atomicResId;
-        reservers[atomicResId] = msg.sender;
-        pendingReservations[atomicResId] = Reservation(atomicResId, 1, name, pkey, reservationPrice, false);
-        EmitPendingReservation(atomicResId, name, pkey, msg.sender);
-    }
-
-    function dappDecision(uint id, bool accepted) public only(signatory) {
-        Reservation storage r = pendingReservations[id];
-        require(r.id == id);
-
-        if(accepted) {
-            // Return funds to possible user owner
-            if(names[r.name] > 0){
-              uint rId = names[r.name];
-              // Paying back EOS
-              if(lastSoldFor[rId] == 0) giveEOS(reservers[rId], reservations[rId].priceReservedAt);
-              // Paying back ETH
-              else reservers[rId].transfer(lastSoldFor[id]);
-            }
-
-            reservations[id] = r;
-            names[r.name] = id;
-        }
-
-        delete pendingNames[r.name];
-        delete pendingReservations[id];
-        EmitDappDecision(id, accepted);
-    }
-
     function bid(uint rId, bytes pkey) public payable unlaunched {
         assert(reservers[rId] != msg.sender);
         assert(bidders[rId] != msg.sender);
@@ -151,6 +118,7 @@ contract ScatterReservation {
         require(reservations[rId].id > 0);
         require(validPkey(pkey));
         require(!equalBytes(reservations[rId].publicKey, pkey));
+
         if(lastSoldFor[rId] > 0) require(lastSoldFor[rId] < msg.value);
         if(bids[rId].price > 0) {
           require(bids[rId].price < msg.value);
@@ -170,6 +138,7 @@ contract ScatterReservation {
 
         uint price = bids[rId].price;
         address bidder = bidders[rId];
+
         delete bidders[rId];
         delete bids[rId];
 
@@ -191,7 +160,6 @@ contract ScatterReservation {
         }
 
         // Changing ownership
-        reservations[rId].transferring = false;
         reservations[rId].publicKey = bids[rId].publicKey;
         reservers[rId] = bidders[rId];
         lastSoldFor[rId] = bids[rId].price;
@@ -199,6 +167,7 @@ contract ScatterReservation {
         delete bids[rId];
         delete bidders[rId];
 
+        reservations[rId].transferring = false;
         EmitSell(rId, lastSoldFor[rId], reservations[rId].publicKey, reservers[rId]);
     }
 
@@ -208,7 +177,6 @@ contract ScatterReservation {
     // EOS
     // ---------------------------------
     function takeEOS(uint price) internal returns(bool) {
-        return true;
         require(price <= ERC20(EOS).allowance(msg.sender, this));
         if(!ERC20(EOS).transferFrom(msg.sender, this, price)){
             revert();
@@ -218,7 +186,6 @@ contract ScatterReservation {
     }
 
     function giveEOS(address to, uint price) internal returns(bool) {
-        return true;
         if(!ERC20(EOS).transfer(to, price)){
             revert();
             return false;

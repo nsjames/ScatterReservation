@@ -12,11 +12,10 @@ contract('ScatterReservation', async accounts => {
 
   let gasCosts = [];
   let maxGas = {
-    reserveUser:310000,
-    reserveDapp:220000,
-    dappDecision:200000,
+    reserve:310000,
     bid:210000,
-    sell:150000
+    unbid:210000,
+    sell:180000
   }
 
   const testName = "helloworld";
@@ -54,6 +53,7 @@ contract('ScatterReservation', async accounts => {
 
   it('should be able to set the signatory', async () => {
     await scatter.setSignatory(signatoryKey);
+    assert(await scatter.getSignatory() === signatoryKey);
   });
 
   it('should not have the test name', async () => {
@@ -86,86 +86,55 @@ contract('ScatterReservation', async accounts => {
     // ----------------------------------------------------------------
 
   it('should not be able to reserve an invalid user identity name', async () => {
-    await scatter.reserveUser("a", testKeys[0]).catch(assert);
-    await scatter.reserveUser("aa", testKeys[0]).catch(assert);
+    await scatter.reserve("a", testKeys[0]).catch(assert);
+    await scatter.reserve("aa", testKeys[0]).catch(assert);
   });
 
   it('should not be able to force reserve a user identity name if not the signatory', async () => {
-    await scatter.forceReservedName("scatter", fromB).catch(assert);
+    await scatter.forceReservedNames(["scatter"], fromB).catch(assert);
   });
 
   it('should be able to force reserve a user identity name', async () => {
-    assert(await scatter.forceReservedName("scatter", fromSignatory) !== undefined);
-    await scatter.reserveUser("scatter", testKeys[0]).catch(assert);
+    assert(await scatter.forceReservedNames(["scatter"], fromSignatory) !== undefined);
+    await scatter.reserve("scatter", testKeys[0]).catch(assert);
+  });
+
+  it('should be able to force reserve an array of names', async () => {
+    const names = ['test', 'test2', 'test3'];
+    await scatter.forceReservedNames(names, fromSignatory);
+    assert(await scatter.exists(names[0]));
+    assert(await scatter.exists(names[1]));
+    assert(await scatter.exists(names[2]));
   });
 
   it('should be able to reserve a user identity', async () => {
-    const result = await scatter.reserveUser(testName, testKeys[0], fromA);
-    assert(await scatter.exists(testName), "Test name doesnt exist");
+    const result = await scatter.reserve("prereserved", testKeys[0], fromA);
+    assert(await scatter.exists("prereserved"), "Test name doesnt exist");
     assert(await scatter.reservationOwner(2) === accounts[0], "Wrong owner");
-    assert(result.receipt.gasUsed < maxGas.reserveUser, "Too much gas used: " + result.receipt.gasUsed);
-    gasCosts.push({fn:'reserveUser', gas:result.receipt.gasUsed});
+    assert(result.receipt.gasUsed < maxGas.reserve, "Too much gas used: " + result.receipt.gasUsed);
+    gasCosts.push({fn:'reserve', gas:result.receipt.gasUsed});
   });
 
   it('should not be able to reserve the same user identity name twice', async () => {
-    const result = await scatter.reserveUser(testName, testKeys[0]).catch(assert);
+    const result = await scatter.reserve("prereserved", testKeys[0]).catch(assert);
   });
 
   it('should not be able to reserve an identity with a bad key', async () => {
-    const result = await scatter.reserveUser("goodname","badkey").catch(assert);
+    const result = await scatter.reserve("goodname","badkey").catch(assert);
   });
 
   it('should not be able to reserve an identity with a bad name', async () => {
-    const result = await scatter.reserveUser("",testKeys[0]).catch(assert);
+    const result = await scatter.reserve("",testKeys[0]).catch(assert);
   });
 
   it('should be able to reserve an identity with non-english characters', async () => {
     // Now on atomic ids 2 - 6
     // There is a problem with russian letters, they end up as an int of uppercase letters
-    // assert(await scatter.reserveUser("щщщ",testKeys[0]) !== undefined, "Didnt accept russian");
-    assert(await scatter.reserveUser("漢漢漢",testKeys[0]) !== undefined, "Didnt accept chinese");
-    assert(await scatter.reserveUser("ééé",testKeys[0]) !== undefined, "Didnt accept spanish");
-    assert(await scatter.reserveUser("כככ",testKeys[0]) !== undefined, "Didnt accept hebrew");
-    assert(await scatter.reserveUser("ضضض",testKeys[0]) !== undefined, "Didnt accept arabic");
-  });
-
-    // DAPP IDENTITIES
-    // ----------------------------------------------------------------
-
-  it('should be able to reserve a dapp identity', async () => {
-    // Now on atomic id 7
-    const result = await scatter.reserveDapp(testDappName, testKeys[0], fromA);
-    assert(await scatter.exists(testDappName));
-    assert(await scatter.reservationOwner(3) === accounts[0]);
-    assert(result.receipt.gasUsed < maxGas.reserveDapp, "Too much gas used: " + result.receipt.gasUsed);
-    gasCosts.push({fn:'reserveDapp', gas:result.receipt.gasUsed});
-  });
-
-  it('should not be able to add the same dapp name twice', async () => {
-    await scatter.reserveDapp(testDappName, testKeys[0], fromA).catch(assert);
-  });
-
-  it('should be able to approve the dapp from the signatory', async () => {
-    let result = await scatter.dappDecision(7, true, fromSignatory);
-    assert(await scatter.exists(testDappName), "Cant find name");
-    assert(result.receipt.gasUsed < maxGas.dappDecision, "Too much gas used: " + result.receipt.gasUsed);
-    gasCosts.push({fn:'dappDecision', gas:result.receipt.gasUsed});
-  });
-
-  it('should not be able to approve a dapp that has already been aproved', async () => {
-    await scatter.dappDecision(7, true, fromSignatory).catch(assert);
-  });
-
-  it('should be able to deny a dapp reservation', async () => {
-    assert(await scatter.reserveDapp(badDappName, testKeys[0], fromA) !== undefined);
-    assert(await scatter.dappDecision(8, false, fromSignatory) !== undefined);
-    assert(!await scatter.exists(badDappName));
-  });
-
-  it('should be able to re-reserve a dapp if it gets denied', async () => {
-    assert(await scatter.reserveDapp(badDappName, testKeys[0], fromA) !== undefined);
-    assert(await scatter.dappDecision(9, false, fromSignatory) !== undefined);
-    assert(await scatter.reserveDapp(badDappName, testKeys[0], fromA) !== undefined);
+    // assert(await scatter.reserve("щщщ",testKeys[0]) !== undefined, "Didnt accept russian");
+    assert(await scatter.reserve("漢漢漢",testKeys[0]) !== undefined, "Didnt accept chinese");
+    assert(await scatter.reserve("ééé",testKeys[0]) !== undefined, "Didnt accept spanish");
+    assert(await scatter.reserve("כככ",testKeys[0]) !== undefined, "Didnt accept hebrew");
+    assert(await scatter.reserve("ضضض",testKeys[0]) !== undefined, "Didnt accept arabic");
   });
 
 
@@ -239,22 +208,26 @@ contract('ScatterReservation', async accounts => {
     /**************************************/
 
   it('should not be able to sell from the wrong address', async () => {
-    const result = await scatter.sell(1, fromB).catch(assert);
-  });
-
-  it('should not be able to sell a non existing reservation or bid', async () => {
     const result = await scatter.sell(2, fromB).catch(assert);
   });
 
+  it('should not be able to sell a non existing reservation or bid', async () => {
+    const result = await scatter.sell(3, fromB).catch(assert);
+  });
+
   it('should be able to sell to the highest bid', async () => {
+    await scatter.reserve(testName, testKeys[0], fromA);
+    const id = await scatter.currentId();
+    const result = await scatter.bid(id, testKeys[1], fromBWithValue);
     const balanceBefore = await web3.eth.getBalance(accounts[0]);
     const balanceBBefore = await web3.eth.getBalance(accounts[1]);
-    const result = await scatter.sell(2, fromA);
+    const saleResult = await scatter.sell(id, fromA);
+
     assert(balanceBefore.c[0] < await web3.eth.getBalance(accounts[0]).c[0], "Seller did not get funds");
     assert(balanceBBefore.c[0] == await web3.eth.getBalance(accounts[1]).c[0], "Bidder funds changed");
-    assert(await scatter.reservationOwner(2) === accounts[1], "wrong owner");
+    assert(await scatter.reservationOwner(id) === accounts[1], "wrong owner");
     assert(result.receipt.gasUsed < maxGas.sell, "Too much gas used: " + result.receipt.gasUsed);
-    assert(await scatter.bidOwner(2) === '0x0000000000000000000000000000000000000000', "bidder still exists");
+    assert(await scatter.bidOwner(id) === '0x0000000000000000000000000000000000000000', "bidder still exists");
     gasCosts.push({fn:'sell', gas:result.receipt.gasUsed});
   });
 
@@ -272,7 +245,7 @@ contract('ScatterReservation', async accounts => {
     });
 
     it('should not be able to reserve, bid, or sell after chain launch', async () => {
-      await scatter.reserveUser("randomname", testKeys[1], fromB).catch(assert);
+      await scatter.reserve("randomname", testKeys[1], fromB).catch(assert);
       await scatter.bid(3, testKeys[0], fromAWithValue).catch(assert);
       await scatter.sell(2, fromA).catch(assert);
     });
