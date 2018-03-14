@@ -1,4 +1,4 @@
-pragma solidity ^0.4.19;
+pragma solidity ^0.4.18;
 
 contract ScatterReservation {
 
@@ -28,7 +28,7 @@ contract ScatterReservation {
 
     address private owner;
     address private signatory;
-    uint private reservationPrice;
+    uint public reservationPrice;
 
     mapping (uint => address) private reservers;
     mapping (uint => Reservation) private reservations;
@@ -41,6 +41,8 @@ contract ScatterReservation {
 
     uint private atomicResId;
     bool private chainLaunched;
+
+    uint transferrable = 0;
 
     // CONSTRUCTOR
     // ---------------------------------
@@ -77,21 +79,28 @@ contract ScatterReservation {
 
     // READ ONLY
     // ---------------------------------
-    function currentId()                public constant returns (uint) { return atomicResId; }
-    function exists(bytes24 name)       public constant returns (bool) { return names[name] > 0; }
-    function reservationOwner(uint rId) public constant returns (address) { return reservers[rId]; }
-    function bidOwner(uint rId)         public constant returns (address) { return bidders[rId]; }
-    function getSignatory()             public constant returns (address) { return signatory; }
-    function lastPrice(uint rId)        public constant returns (uint) { return lastSoldFor[rId]; }
+    function currentId()                              public constant returns (uint) { return atomicResId; }
+    function exists(bytes24 name)                     public constant returns (bool) { return names[name] > 0; }
+    function reservationOwner(uint rId)               public constant returns (address) { return reservers[rId]; }
+    function bidOwner(uint rId)                       public constant returns (address) { return bidders[rId]; }
+    function getSignatory()                           public constant returns (address) { return signatory; }
+    function lastPrice(uint rId)                      public constant returns (uint) { return lastSoldFor[rId]; }
+    function getTransferrable()                       public constant only(signatory) returns (uint) { return transferrable; }
 
     // WRITE
     // ---------------------------------
     function() public payable {}
-    function setSignatory(address _signatory)   public only(0x0) { signatory = _signatory; }
-    function setChainLaunched(bool _launched)   public only(signatory) { chainLaunched = _launched; }
-    function setEOSAddress(address _address)    public only(signatory) { EOS = _address; }
-    function setReservationPrice(uint _price)   public only(signatory) { reservationPrice = _price; }
-    function setBidTimeout(uint timeout)        public only(signatory) { bidTimeout = timeout; }
+    function setSignatory(address _signatory)         public only(0x0) { signatory = _signatory; }
+    function setChainLaunched(bool _launched)         public only(signatory) { chainLaunched = _launched; }
+    function setEOSAddress(address _address)          public only(signatory) { EOS = _address; }
+    function setReservationPrice(uint _price)         public only(signatory) { reservationPrice = _price; }
+    function setBidTimeout(uint timeout)              public only(signatory) { bidTimeout = timeout; }
+    function transferOut(address to, uint amount)     public only(signatory) {
+      if(amount < transferrable){
+        transferrable -= amount;
+        if(!to.send(amount)) transferrable += amount;
+      }
+    }
 
     function forceReservedNames(bytes24[] _names)   public only(signatory) {
       for (uint i = 0; i < _names.length; i++)
@@ -158,6 +167,8 @@ contract ScatterReservation {
             reservations[rId].transferring = false;
             return;
         }
+
+        transferrable += bids[rId].price/10;
 
         // Changing ownership
         reservations[rId].publicKey = bids[rId].publicKey;

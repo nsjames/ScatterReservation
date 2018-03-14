@@ -240,6 +240,13 @@ contract('ScatterReservation', async accounts => {
     /*******          FLOW          *******/
     /**************************************/
 
+    it('setting a high bid to check transferrable', async () => {
+      await scatter.reserve("highbid", testKeys[1], fromA);
+      const nextId = await scatter.currentId();
+      await scatter.bid(nextId, testKeys[0], {from:accounts[1], value:p(10)});
+      await scatter.sell(nextId, fromA);
+    });
+
     it('should be able to set chain launched to true', async () => {
       await scatter.setChainLaunched(true, fromA);
     });
@@ -248,6 +255,24 @@ contract('ScatterReservation', async accounts => {
       await scatter.reserve("randomname", testKeys[1], fromB).catch(assert);
       await scatter.bid(3, testKeys[0], fromAWithValue).catch(assert);
       await scatter.sell(2, fromA).catch(assert);
+    });
+
+    it('should be able to check the transferrable funds, but only from signatory or owner', async () => {
+      const transferrable = await scatter.getTransferrable(fromSignatory);
+      assert(transferrable !== undefined);
+
+      // Transferrable amount is greater than 1 ETH
+      assert(transferrable.toString() > '1000000000000000000');
+      await scatter.getTransferrable(fromB).catch(assert);
+    });
+
+    it('should be able to transfer funds using signatory account to any address', async () => {
+      const balanceBefore = await web3.eth.getBalance(accounts[4]);
+      const result = await scatter.transferOut(accounts[4], '1000000000000000000', fromSignatory);
+      const balanceAfter = await web3.eth.getBalance(accounts[4]);
+      assert(balanceAfter.toString() === balanceBefore.add(1000000000000000000).toString())
+
+      assert(await scatter.transferOut(accounts[4], '1', fromB).catch(assert) === undefined);
     });
 
 

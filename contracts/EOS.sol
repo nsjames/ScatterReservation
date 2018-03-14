@@ -1,3 +1,5 @@
+pragma solidity ^0.4.18;
+
 contract DSNote {
     event LogNote(
         bytes4   indexed  sig,
