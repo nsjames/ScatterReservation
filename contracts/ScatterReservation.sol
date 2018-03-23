@@ -4,6 +4,8 @@ contract ScatterReservation {
 
     // STRUCTS
     // ---------------------------------
+    // ---------------------------------
+    // ---------------------------------
     struct Reservation {
         uint id;
         bytes1 entityType;
@@ -22,6 +24,8 @@ contract ScatterReservation {
 
 
     // STATE VARIABLES
+    // ---------------------------------
+    // ---------------------------------
     // ---------------------------------
     address private EOS;
     uint private bidTimeout = 2 days;
@@ -46,6 +50,8 @@ contract ScatterReservation {
 
     // CONSTRUCTOR
     // ---------------------------------
+    // ---------------------------------
+    // ---------------------------------
     function ScatterReservation(address _eos) public {
         EOS = _eos;
         owner = msg.sender;
@@ -60,12 +66,16 @@ contract ScatterReservation {
 
     // EVENTS
     // ---------------------------------
+    // ---------------------------------
+    // ---------------------------------
     event EmitReservation(uint reservationId, bytes24 name, bytes pkey, address eth);
     event EmitBid(uint reservationId, bytes pkey, uint price, address eth);
     event EmitUnBid(uint reservationId, uint price, address bidder);
     event EmitSell(uint reservationId, uint price, bytes pkey, address eth);
 
     // MODIFIERS
+    // ---------------------------------
+    // ---------------------------------
     // ---------------------------------
     modifier only(address _address){
       require(msg.sender == _address || owner == msg.sender);
@@ -77,17 +87,27 @@ contract ScatterReservation {
       _;
     }
 
-    // READ ONLY
+    // READ
+    // ---------------------------------
+    // ---------------------------------
     // ---------------------------------
     function currentId()                              public constant returns (uint) { return atomicResId; }
     function exists(bytes24 name)                     public constant returns (bool) { return names[name] > 0; }
-    function reservationOwner(uint rId)               public constant returns (address) { return reservers[rId]; }
-    function bidOwner(uint rId)                       public constant returns (address) { return bidders[rId]; }
     function getSignatory()                           public constant returns (address) { return signatory; }
     function lastPrice(uint rId)                      public constant returns (uint) { return lastSoldFor[rId]; }
+    function reservationOwner(uint rId)               public constant only(signatory) returns (address) { return reservers[rId]; }
+    function bidOwner(uint rId)                       public constant only(signatory) returns (address) { return bidders[rId]; }
     function getTransferrable()                       public constant only(signatory) returns (uint) { return transferrable; }
+    function eosBalance()                             public constant only(signatory) returns (uint) { return ERC20(EOS).balanceOf(owner); }
+
 
     // WRITE
+    // ---------------------------------
+    // ---------------------------------
+    // ---------------------------------
+
+
+    // SIGNATORY/OWNER
     // ---------------------------------
     function() public payable {}
     function setSignatory(address _signatory)         public only(0x0) { signatory = _signatory; }
@@ -95,18 +115,28 @@ contract ScatterReservation {
     function setEOSAddress(address _address)          public only(signatory) { EOS = _address; }
     function setReservationPrice(uint _price)         public only(signatory) { reservationPrice = _price; }
     function setBidTimeout(uint timeout)              public only(signatory) { bidTimeout = timeout; }
-    function transferOut(address to, uint amount)     public only(signatory) {
+
+    function transferEthOut(address to, uint amount) public only(signatory) {
       if(amount < transferrable){
         transferrable -= amount;
         if(!to.send(amount)) transferrable += amount;
       }
     }
 
-    function forceReservedNames(bytes24[] _names)   public only(signatory) {
+    function transferEosOut(address to, uint amount) public only(signatory) {
+      require(eosBalance() >= amount);
+      require(giveEOS(to, amount));
+    }
+
+    function forceReservedNames(bytes24[] _names) public only(signatory) {
       for (uint i = 0; i < _names.length; i++)
           names[_names[i]] = 1;
     }
 
+
+
+    // PUBLIC
+    // ---------------------------------
     function reserve(bytes24 name, bytes pkey) public unlaunched {
         require(validReservation(name,pkey));
         require(!exists(name));

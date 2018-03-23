@@ -41,10 +41,6 @@ contract('ScatterReservation', async accounts => {
 
   let eos = null;
 
-  // const eos = (price) => {
-  //   const eos = ERC20
-  // }
-
 
   it('should get a reference to the contract', async () => {
     scatter = await ScatterReservation.deployed();
@@ -266,13 +262,20 @@ contract('ScatterReservation', async accounts => {
       await scatter.getTransferrable(fromB).catch(assert);
     });
 
-    it('should be able to transfer funds using signatory account to any address', async () => {
+    it('should be able to transfer out ETH funds using signatory account to any address', async () => {
       const balanceBefore = await web3.eth.getBalance(accounts[4]);
-      const result = await scatter.transferOut(accounts[4], '1000000000000000000', fromSignatory);
+      const result = await scatter.transferEthOut(accounts[4], '1000000000000000000', fromSignatory);
       const balanceAfter = await web3.eth.getBalance(accounts[4]);
       assert(balanceAfter.toString() === balanceBefore.add(1000000000000000000).toString())
 
-      assert(await scatter.transferOut(accounts[4], '1', fromB).catch(assert) === undefined);
+      assert(await scatter.transferEthOut(accounts[4], '1', fromB).catch(assert) === undefined);
+    });
+
+    it('should be able to transfer out EOS funds using signatory account to any address', async () => {
+      const balanceBefore = await eos.balanceOf(accounts[1]);
+      const result = await scatter.transferEosOut(accounts[1], '1000000000000000000', fromSignatory);
+      const balanceAfter = await eos.balanceOf(accounts[1]);
+      assert(balanceAfter.toString() === balanceBefore.add(1000000000000000000).toString(), "Balance B doesn't match");
     });
 
 
